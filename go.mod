@@ -1,4 +1,4 @@
-module github.com/buraksezer/consistent
+module github.com/mirokuratczyk/consistent
 
 go 1.9
 
