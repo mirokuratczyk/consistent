@@ -35,16 +35,13 @@ func main() {
 	// Modify PartitionCount, ReplicationFactor and Load to increase or decrease
 	// relocation ratio.
 	cfg := consistent.Config{
-		PartitionCount:    271,
-		ReplicationFactor: 20,
-		Load:              1.25,
-		Hasher:            hasher{},
+		Hasher: hasher{},
 	}
 	c := consistent.New(members, cfg)
 
 	// Store current layout of partitions
 	owners := make(map[int]string)
-	for partID := 0; partID < cfg.PartitionCount; partID++ {
+	for partID := 0; partID < len(c.GetMembers()); partID++ {
 		owners[partID] = c.GetPartitionOwner(partID).String()
 	}
 
@@ -61,5 +58,5 @@ func main() {
 			fmt.Printf("partID: %3d moved to %s from %s\n", partID, owner.String(), member)
 		}
 	}
-	fmt.Printf("\n%d%% of the partitions are relocated\n", (100*changed)/cfg.PartitionCount)
+	fmt.Printf("\n%d%% of the partitions are relocated\n", (100*changed)/len(c.GetMembers()))
 }

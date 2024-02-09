@@ -59,16 +59,8 @@ package consistent
 import (
 	"encoding/binary"
 	"errors"
-	"fmt"
-	"math"
 	"sort"
 	"sync"
-)
-
-const (
-	DefaultPartitionCount    int     = 271
-	DefaultReplicationFactor int     = 20
-	DefaultLoad              float64 = 1.25
 )
 
 // ErrInsufficientMemberCount represents an error which means there are not enough members to complete the task.
@@ -91,54 +83,45 @@ type Member interface {
 type Config struct {
 	// Hasher is responsible for generating unsigned, 64-bit hash of provided byte slice.
 	Hasher Hasher
-
-	// Keys are distributed among partitions. Prime numbers are good to
-	// distribute keys uniformly. Select a big PartitionCount if you have
-	// too many keys.
-	PartitionCount int
-
-	// Members are replicated on consistent hash ring. This number means that a member
-	// how many times replicated on the ring.
-	ReplicationFactor int
-
-	// Load is used to calculate average load. See the code, the paper and Google's blog post to learn about it.
-	Load float64
 }
 
 // Consistent holds the information about the members of the consistent hash circle.
 type Consistent struct {
 	mu sync.RWMutex
 
-	config         Config
-	hasher         Hasher
-	sortedSet      []uint64
-	partitionCount uint64
-	loads          map[string]float64
-	members        map[string]*Member
-	partitions     map[int]*Member
-	ring           map[uint64]*Member
+	// TODO: remove unused members
+	config     Config
+	hasher     Hasher
+	sortedSet  []uint64
+	loads      map[string]float64
+	members    map[string]*Member
+	partitions map[int]*Member
+	ring       map[uint64]*Member
 }
+
+// NOTES
+// -----
+// sortedSet: sort(map hash_uint64 member.String()) // sorted hashes of member.String()
+// loads: member.String() => [0, 1]                 // map of member.String() to load
+// members: member.String() => member               // map of member.String() to member
+// partitions: [0, len(members)-1] => member        // map of [0, len(members)-1] to member
+// ring: hash_uint64(member.String()) => member     // map of hash of member.String() to member
 
 // New creates and returns a new Consistent object.
 func New(members []Member, config Config) *Consistent {
+
+	// TODO: return error if duplicate members; wait if the coder wants to
+	// give more weight to certain members? Check how replication factor
+	// was done in the original code.
+
 	if config.Hasher == nil {
 		panic("Hasher cannot be nil")
 	}
-	if config.PartitionCount == 0 {
-		config.PartitionCount = DefaultPartitionCount
-	}
-	if config.ReplicationFactor == 0 {
-		config.ReplicationFactor = DefaultReplicationFactor
-	}
-	if config.Load == 0 {
-		config.Load = DefaultLoad
-	}
 
 	c := &Consistent{
-		config:         config,
-		members:        make(map[string]*Member),
-		partitionCount: uint64(config.PartitionCount),
-		ring:           make(map[uint64]*Member),
+		config:  config,
+		members: make(map[string]*Member),
+		ring:    make(map[uint64]*Member),
 	}
 
 	c.hasher = config.Hasher
@@ -169,31 +152,21 @@ func (c *Consistent) AverageLoad() float64 {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
-	return c.averageLoad()
-}
-
-func (c *Consistent) averageLoad() float64 {
-	if len(c.members) == 0 {
-		return 0
-	}
-
-	avgLoad := float64(c.partitionCount/uint64(len(c.members))) * c.config.Load
-	return math.Ceil(avgLoad)
+	return 0 // TODO: proper online avg load calculation
 }
 
 func (c *Consistent) distributeWithLoad(partID, idx int, partitions map[int]*Member, loads map[string]float64) {
-	avgLoad := c.averageLoad()
 	var count int
 	for {
 		count++
-		if count >= len(c.sortedSet) {
+		if count > len(c.sortedSet) {
 			// User needs to decrease partition count, increase member count or increase load factor.
 			panic("not enough room to distribute partitions")
 		}
 		i := c.sortedSet[idx]
 		member := *c.ring[i]
 		load := loads[member.String()]
-		if load+1 <= avgLoad {
+		if load+1 <= 1 {
 			partitions[partID] = &member
 			loads[member.String()]++
 			return
@@ -210,7 +183,7 @@ func (c *Consistent) distributePartitions() {
 	partitions := make(map[int]*Member)
 
 	bs := make([]byte, 8)
-	for partID := uint64(0); partID < c.partitionCount; partID++ {
+	for partID := uint64(0); partID < uint64(len(c.members)); partID++ {
 		binary.LittleEndian.PutUint64(bs, partID)
 		key := c.hasher.Sum64(bs)
 		idx := sort.Search(len(c.sortedSet), func(i int) bool {
@@ -226,12 +199,10 @@ func (c *Consistent) distributePartitions() {
 }
 
 func (c *Consistent) add(member Member) {
-	for i := 0; i < c.config.ReplicationFactor; i++ {
-		key := []byte(fmt.Sprintf("%s%d", member.String(), i))
-		h := c.hasher.Sum64(key)
-		c.ring[h] = &member
-		c.sortedSet = append(c.sortedSet, h)
-	}
+	key := []byte(member.String()) // TODO: member weighting here
+	h := c.hasher.Sum64(key)
+	c.ring[h] = &member
+	c.sortedSet = append(c.sortedSet, h)
 	// sort hashes ascendingly
 	sort.Slice(c.sortedSet, func(i int, j int) bool {
 		return c.sortedSet[i] < c.sortedSet[j]
@@ -272,12 +243,11 @@ func (c *Consistent) Remove(name string) {
 		return
 	}
 
-	for i := 0; i < c.config.ReplicationFactor; i++ {
-		key := []byte(fmt.Sprintf("%s%d", name, i))
-		h := c.hasher.Sum64(key)
-		delete(c.ring, h)
-		c.delSlice(h)
-	}
+	key := []byte(name) // TODO: weighted integration point
+	h := c.hasher.Sum64(key)
+	delete(c.ring, h)
+	c.delSlice(h)
+
 	delete(c.members, name)
 	if len(c.members) == 0 {
 		// consistent hash ring is empty now. Reset the partition table.
@@ -303,7 +273,7 @@ func (c *Consistent) LoadDistribution() map[string]float64 {
 // FindPartitionID returns partition id for given key.
 func (c *Consistent) FindPartitionID(key []byte) int {
 	hkey := c.hasher.Sum64(key)
-	return int(hkey % c.partitionCount)
+	return int(hkey % uint64(len(c.members)))
 }
 
 // GetPartitionOwner returns the owner of the given partition.
@@ -324,10 +294,52 @@ func (c *Consistent) getPartitionOwner(partID int) Member {
 	return *member
 }
 
+// GetPartitionOwner2 returns the owner of the given partition.
+func (c *Consistent) GetPartitionOwner2(partID int) Member {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	return *c.ring[c.sortedSet[partID]]
+}
+
 // LocateKey finds a home for given key
 func (c *Consistent) LocateKey(key []byte) Member {
-	partID := c.FindPartitionID(key)
-	return c.GetPartitionOwner(partID)
+	// partID := c.FindPartitionID(key)
+	// return c.GetPartitionOwner(partID)
+	return c.locateKey(key)
+}
+
+// NEW
+func (c *Consistent) locateKey(key []byte) Member {
+	// partID := c.FindPartitionID(key)
+	// return c.GetPartitionOwner(partID)
+	hkey := c.hasher.Sum64(key)
+	i := int(hkey % uint64(len(c.members)))
+	return *c.ring[c.sortedSet[i]]
+}
+
+// NOTE: this results in better key relocation, but much worse
+// load balancing. TODO: Would a lower key location percentage be ideal
+// depending on the usee case?
+func (c *Consistent) locateKey2(key []byte) Member {
+	hkey := c.hasher.Sum64(key)
+
+	idx := sort.Search(len(c.sortedSet), func(i int) bool {
+		return c.sortedSet[i] >= hkey
+	})
+	if idx == len(c.sortedSet) {
+		// hkey larger than all values in sorted set
+		// distanceFromPrev := hkey - c.sortedSet[len(c.sortedSet)-1]
+		// distanceFromMin := math.MaxUint64 - hkey
+		// if distanceFromPrev > distanceFromMin {
+		// 	idx = len(c.sortedSet) - 1
+		// } else { // TODO: what if equal
+		// 	idx = 0
+		// }
+		idx = 0 // next node on the hash ring
+		// fmt.Println(distanceFromPrev, distanceFromMin)
+	}
+	return *c.ring[c.sortedSet[idx]]
 }
 
 func (c *Consistent) getClosestN(partID, count int) ([]Member, error) {

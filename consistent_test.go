@@ -32,10 +32,7 @@ import (
 
 func newConfig() Config {
 	return Config{
-		PartitionCount:    23,
-		ReplicationFactor: 20,
-		Load:              1.25,
-		Hasher:            hasher{},
+		Hasher: hasher{},
 	}
 }
 

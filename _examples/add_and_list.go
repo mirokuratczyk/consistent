@@ -26,17 +26,14 @@ func main() {
 		members = append(members, member)
 	}
 	cfg := consistent.Config{
-		PartitionCount:    71,
-		ReplicationFactor: 20,
-		Load:              1.25,
-		Hasher:            hasher{},
+		Hasher: hasher{},
 	}
 
 	c := consistent.New(members, cfg)
 	owners := make(map[string]int)
-	for partID := 0; partID < cfg.PartitionCount; partID++ {
+	for partID := 0; partID < len(c.GetMembers()); partID++ {
 		owner := c.GetPartitionOwner(partID)
-		owners[owner.String()]++
+		owners[owner.String()]++ // TODO: assert value is max 1 for each "owner"
 	}
 	fmt.Println("average load:", c.AverageLoad())
 	fmt.Println("owners:", owners)

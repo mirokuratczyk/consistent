@@ -33,15 +33,12 @@ func main() {
 		members = append(members, member)
 	}
 	cfg := consistent.Config{
-		PartitionCount:    271,
-		ReplicationFactor: 40,
-		Load:              1.2,
-		Hasher:            hasher{},
+		Hasher: hasher{},
 	}
 	c := consistent.New(members, cfg)
 
 	keyCount := 1000000
-	load := (c.AverageLoad() * float64(keyCount)) / float64(cfg.PartitionCount)
+	load := (c.AverageLoad() * float64(keyCount)) / float64(len(c.GetMembers()))
 	fmt.Println("Maximum key count for a member should be around this: ", math.Ceil(load))
 	distribution := make(map[string]int)
 	key := make([]byte, 4)

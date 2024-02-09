@@ -28,10 +28,7 @@ func (h hasher) Sum64(data []byte) uint64 {
 func main() {
 	// Create a new consistent instance
 	cfg := consistent.Config{
-		PartitionCount:    7,
-		ReplicationFactor: 20,
-		Load:              1.25,
-		Hasher:            hasher{},
+		Hasher: hasher{},
 	}
 	c := consistent.New(nil, cfg)
 
